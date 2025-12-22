@@ -179,7 +179,7 @@ export default function App() {
 
   return (
     <div style={{ padding: 20 }}>
-      <h1>Qubic Demo</h1>
+      <h1>Qubiq Demo</h1>
       {/* POWER */}
       <h2>Power (W)</h2>
       <ResponsiveContainer width="100%" height={250}>
