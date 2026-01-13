@@ -9,104 +9,132 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-// Only use these two for now:
-const SENSOR1 = "7c:c6:b6:73:9d:6d"; // Prozessluft
-const SENSOR2 = "f8:44:77:05:40:48"; // Trockenluft
+// ---------- IDs ----------
+const DEVICE1 = "shellyproem50-441d6475ac84";
+const DEVICE2 = "shellyproem50-441d6475ac84-AUSGANG2";
 
+const SENSOR1 = "7c:c6:b6:73:9d:6d"; // Prozessluft 1
+const SENSOR2 = "f8:44:77:05:40:48"; // Trockenluft 1
+const SENSOR3 = "f8:44:77:3a:0c:40"; // Prozessluft 2
+const SENSOR4 = "f8:44:77:21:32:65"; // Trockenluft 2
 
+type SensorMeta = {
+  name: string;
+  color: string;
+};
 
+const SENSOR_META: Record<string, SensorMeta> = {
+  "7c:c6:b6:73:9d:6d": {
+    name: "Prozessluft 1",
+    color: "#ff7300",
+  },
+  "f8:44:77:05:40:48": {
+    name: "Trockenluft 1",
+    color: "#0088FE",
+  },
+  "f8:44:77:3a:0c:40": {
+    name: "Prozessluft 2",
+    color: "#ff4d4f",
+  },
+  "f8:44:77:21:32:65": {
+    name: "Trockenluft 2",
+    color: "#00c49f",
+  },
+};
 
-// sensor gives different data at different times:
-// time, humidity, temperature every 1 minute
-// time, power, energy every 5 seconds
-type UnifiedPoint = {
-  ts: number;
-  timeLabel: string;
+type DeviceMeta = {
+  label: string;
+  color: string;
+};
 
-  power?: number;
-  energy?: number;
-
-  // sensor 1 (Prozessluft)
-  temperature1?: number;
-  humidity1?: number;
-
-  // sensor 2 (Trockenluft)
-  temperature2?: number;
-  humidity2?: number;
-
-  strompreis?: number;
-  differenz_wasserinhalt?: number;
-  entfeuchtungseffizienz?: number;
+const DEVICE_META: Record<string, DeviceMeta> = {
+  d1: { label: "Device 1", color: "#1900ff" }, // blue
+  d2: { label: "Device 2", color: "#1bad3d" }, // green
 };
 
 
-const ONE_MINUTE_MS = 60_000;
+// ---------- Config: add more devices easily ----------
+const SETUPS = [
+  {
+    key: "d1",
+    label: "Device 1",
+    deviceId: DEVICE1,
+    procMac: SENSOR1,
+    dryMac: SENSOR2,
+  },
+  {
+    key: "d2",
+    label: "Device 2",
+    deviceId: DEVICE2,
+    procMac: SENSOR3,
+    dryMac: SENSOR4,
+  },
+] as const;
 
+type SetupKey = typeof SETUPS[number]["key"];
+
+// ---------- Time window ----------
+const ONE_MINUTE_MS = 60_000;
 const WINDOW_MINUTES = 10;
 const WINDOW_MS = WINDOW_MINUTES * 60 * 1000;
 
-// Strompreis
+// ---------- Price calc ----------
 const STROMPREIS_CHF = 0.28;
 const ZEITRAUM = 20;
-const STUNDEN_PRO_JAHR = 24*365; 
+const STUNDEN_PRO_JAHR = 24 * 365;
 const GLEICHZEITIGKEIT = 0.5;
 
-
-function calculateAbsoluteHumidity(temperatureC: number, relativeHumidity: number) {
-
-    // Saturation vapor pressure (hPa) – Magnus formula
-    //const saturationVaporPressure = 6.112 * Math.exp((17.62 * temperatureC) / (243.12 + temperatureC));
-    const saturationVaporPressure = 6.112 * Math.exp((16 * temperatureC) / (243.12 + temperatureC));
-
-    // Actual vapor pressure (hPa)
-    const vaporPressure =
-        (relativeHumidity / 100) * saturationVaporPressure;
-
-    // Absolute humidity (g/m³)
-    return (216.7 * vaporPressure) / (temperatureC + 273.15);
-}
-
-
-
-
-function minuteBucket(ts: number) {
-  return Math.floor(ts / ONE_MINUTE_MS) * ONE_MINUTE_MS;
-}
-
-
-// Backend row shape (minimal fields we use)
+// ---------- Types ----------
 type DbRow = {
-  ts: string;                // ISO string
-  received_at?: string;      // ISO
+  ts: string; // ISO
+  received_at?: string;
   device_id?: string;
-
   sensor_mac?: string | null;
 
-  // Power meter fields
   act_power?: number | null;
 
-  // Environment fields
   temperature?: number | null;
   humidity?: number | null;
   battery?: number | null;
 };
 
+type UnifiedPoint = {
+  ts: number;
+  timeLabel: string;
+
+  // Power/cost/metrics per setup (dynamic keys)
+  // Example keys: power_d1, strompreis_d1, entfeuchtungseffizienz_d1, differenz_wasserinhalt_d1
+  [k: string]: number | string | undefined;
+};
+
+// ---------- Helpers ----------
+function minuteBucket(tsMs: number) {
+  return Math.floor(tsMs / ONE_MINUTE_MS) * ONE_MINUTE_MS;
+}
+
+function calculateAbsoluteHumidity(temperatureC: number, relativeHumidity: number) {
+  const saturationVaporPressure =
+    6.112 * Math.exp((16 * temperatureC) / (243.12 + temperatureC));
+  const vaporPressure = (relativeHumidity / 100) * saturationVaporPressure;
+  return (216.7 * vaporPressure) / (temperatureC + 273.15);
+}
+
+// ---------- Normalization ----------
 function normalizeMeasurements(rows: DbRow[]): UnifiedPoint[] {
   const sorted = [...rows].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
 
   const buckets = new Map<number, UnifiedPoint>();
 
-  let lastEnergy = 0;
+  // last env per MAC (so lines stay continuous)
+  const lastEnvByMac: Record<string, { t?: number; h?: number }> = {};
 
-  // hold last-known env values per sensor so lines don’t drop to undefined
-  let lastT1: number | undefined;
-  let lastH1: number | undefined;
-  let lastT2: number | undefined;
-  let lastH2: number | undefined;
+  // energy integration per device (very simple; keeps your old assumption)
+  const lastEnergyByDevice: Record<string, number> = {};
+  for (const s of SETUPS) lastEnergyByDevice[s.deviceId] = 0;
 
   for (const r of sorted) {
-    const rawTsMs = Date.parse(r.ts); // ts is TIMESTAMPTZ -> ISO string
-    const minuteTs = minuteBucket(rawTsMs);
+    const tsMs = Date.parse(r.ts ?? r.received_at);
+    const minuteTs = minuteBucket(tsMs);
 
     let p = buckets.get(minuteTs);
     if (!p) {
@@ -117,87 +145,99 @@ function normalizeMeasurements(rows: DbRow[]): UnifiedPoint[] {
       buckets.set(minuteTs, p);
     }
 
-    // --- Environment: route by sensor_mac ---
+     for (const macKey of [SENSOR1, SENSOR2, SENSOR3, SENSOR4]) {
+        const last = lastEnvByMac[macKey];
+        if (!last) continue;
+
+        if (last.t !== undefined && p[`temp_${macKey}`] === undefined) {
+          p[`temp_${macKey}`] = last.t;
+        }
+        if (last.h !== undefined && p[`hum_${macKey}`] === undefined) {
+          p[`hum_${macKey}`] = last.h;
+        }
+      }
+
     const mac = (r.sensor_mac ?? "").toLowerCase();
+    const devId = r.device_id ?? "";
 
-    if (mac === SENSOR1) {
-      if (typeof r.temperature === "number") lastT1 = r.temperature;
-      if (typeof r.humidity === "number") lastH1 = r.humidity;
-    } else if (mac === SENSOR2) {
-      if (typeof r.temperature === "number") lastT2 = r.temperature;
-      if (typeof r.humidity === "number") lastH2 = r.humidity;
+    // ---- Env: store by MAC and write to point keys (so we can chart all sensors) ----
+    if (mac) {
+      if (!lastEnvByMac[mac]) lastEnvByMac[mac] = {};
+      if (typeof r.temperature === "number") lastEnvByMac[mac].t = r.temperature;
+      if (typeof r.humidity === "number") lastEnvByMac[mac].h = r.humidity;
+
+      // chart keys for each sensor line
+      const t = lastEnvByMac[mac].t;
+      const h = lastEnvByMac[mac].h;
+      if (t !== undefined) p[`temp_${mac}`] = t;
+      if (h !== undefined) p[`hum_${mac}`] = h;
     }
 
-    if (lastT1 !== undefined) p.temperature1 = lastT1;
-    if (lastH1 !== undefined) p.humidity1 = lastH1;
-    if (lastT2 !== undefined) p.temperature2 = lastT2;
-    if (lastH2 !== undefined) p.humidity2 = lastH2;
+    // ---- Power: per device ----
+    if (typeof r.act_power === "number" && devId) {
+      // only assign if this device is part of SETUPS (otherwise ignore)
+      const setup = SETUPS.find((s) => s.deviceId === devId);
+      if (setup) {
+        const key = setup.key;
 
-    // --- Power meter ---
-    if (typeof r.act_power === "number") {
-      p.power = r.act_power;
+        p[`power_${key}`] = r.act_power;
 
-      // you were assuming power points every 5s; we keep that assumption
-      lastEnergy += r.act_power * (5 / 3600);
-      p.energy = Number(lastEnergy.toFixed(2));
+        // NOTE: your original code assumed power points every 5 seconds.
+        // Keeping that for now to minimize changes.
+        lastEnergyByDevice[devId] += r.act_power * (5 / 3600);
+        p[`energy_${key}`] = Number(lastEnergyByDevice[devId].toFixed(2));
 
-      p.strompreis =
-        (p.power / 1000) *
-        STROMPREIS_CHF *
-        ZEITRAUM *
-        STUNDEN_PRO_JAHR *
-        GLEICHZEITIGKEIT;
+        p[`strompreis_${key}`] =
+          (r.act_power / 1000) *
+          STROMPREIS_CHF *
+          ZEITRAUM *
+          STUNDEN_PRO_JAHR *
+          GLEICHZEITIGKEIT;
+      }
     }
 
-    // --- Derived metrics (need sensor 1 + sensor 2 + power) ---
-    if (
-      p.power !== undefined &&
-      p.temperature1 !== undefined &&
-      p.humidity1 !== undefined &&
-      p.temperature2 !== undefined &&
-      p.humidity2 !== undefined
-    ) {
-      // Input (sensor 1)
-      const prozessLuft = {
-        VOLUMENSTROM: 50, // m^3 / h
-        DICHTE: 1.12,     // kg/m^3
-        TEMPERATUR: p.temperature1,
-        RELATIVE_HUMIDITY: p.humidity1,
-      };
-      const abs1 = calculateAbsoluteHumidity(prozessLuft.TEMPERATUR, prozessLuft.RELATIVE_HUMIDITY);
-      const wasser1 = prozessLuft.VOLUMENSTROM * prozessLuft.DICHTE * abs1 / 1000;
+    // ---- Derived metrics per setup (needs proc+dry env + power for that setup) ----
+    for (const s of SETUPS) {
+      const key = s.key;
 
-      // Output (sensor 2)
-      const trockenLuft = {
-        VOLUMENSTROM: 50,
-        DICHTE: 1.12,
-        TEMPERATUR: p.temperature2,
-        RELATIVE_HUMIDITY: p.humidity2,
-      };
-      const abs2 = calculateAbsoluteHumidity(trockenLuft.TEMPERATUR, trockenLuft.RELATIVE_HUMIDITY);
-      const wasser2 = trockenLuft.VOLUMENSTROM * trockenLuft.DICHTE * abs2 / 1000;
+      const power = p[`power_${key}`] as number | undefined;
 
-      p.differenz_wasserinhalt = Math.abs(wasser1 - wasser2);
-      p.entfeuchtungseffizienz = p.differenz_wasserinhalt / (p.power / 1000);
+      const proc = lastEnvByMac[s.procMac]?.t !== undefined && lastEnvByMac[s.procMac]?.h !== undefined
+        ? { t: lastEnvByMac[s.procMac].t!, h: lastEnvByMac[s.procMac].h! }
+        : null;
+
+      const dry = lastEnvByMac[s.dryMac]?.t !== undefined && lastEnvByMac[s.dryMac]?.h !== undefined
+        ? { t: lastEnvByMac[s.dryMac].t!, h: lastEnvByMac[s.dryMac].h! }
+        : null;
+
+      if (power !== undefined && proc && dry) {
+        // Input (Prozessluft)
+        const abs1 = calculateAbsoluteHumidity(proc.t, proc.h);
+        const wasser1 = 50 * 1.12 * abs1 / 1000;
+
+        // Output (Trockenluft)
+        const abs2 = calculateAbsoluteHumidity(dry.t, dry.h);
+        const wasser2 = 50 * 1.12 * abs2 / 1000;
+
+        const diff = Math.abs(wasser1 - wasser2);
+        p[`differenz_wasserinhalt_${key}`] = diff;
+        p[`entfeuchtungseffizienz_${key}`] = diff / (power / 1000);
+      }
     }
   }
 
   const now = Date.now();
-  return Array.from(buckets.values()).filter((p) => p.ts >= now - WINDOW_MS);
+  return Array.from(buckets.values()).filter((p) => (p.ts as number) >= now - WINDOW_MS);
 }
-
 
 export default function App() {
   const [data, setData] = useState<UnifiedPoint[]>([]);
 
-  console.log(data)
-  
   useEffect(() => {
     const fetchData = async () => {
       const res = await fetch("https://plan-peak-backendnew.vercel.app/measurements");
       const json = await res.json();
-      const normalized = normalizeMeasurements(json.measurements);
-      setData(normalized);
+      setData(normalizeMeasurements(json.measurements));
     };
 
     fetchData();
@@ -205,10 +245,57 @@ export default function App() {
     return () => clearInterval(id);
   }, []);
 
+    // pick last (latest) point that has a numeric value for a given key
+  function lastNumber(data: UnifiedPoint[], key: string): number | undefined {
+    for (let i = data.length - 1; i >= 0; i--) {
+      const v = data[i][key];
+      if (typeof v === "number" && Number.isFinite(v)) return v;
+    }
+    return undefined;
+  }
+
+  const cost1 = lastNumber(data, "strompreis_d1"); // CHF (20 years)
+  const cost2 = lastNumber(data, "strompreis_d2");
+
+  const savings =
+    cost1 !== undefined && cost2 !== undefined ? (cost2 - cost1) : undefined;
+  // Positive savings means: Device 1 is cheaper than Device 2 (because cost2 - cost1 > 0)
+
 
   return (
     <div style={{ padding: 20 }}>
       <h1>Qubiq Demo</h1>
+
+      <div
+      style={{
+        padding: "6px 14px",
+        borderRadius: 4,
+        border: "1px solid #e6e8f0",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        flexWrap: "wrap",
+      }}
+    >
+      <div style={{ fontWeight: 700, fontSize: 20}}>
+        Ersparnisse auf 10 Jahre:
+      </div>
+
+      <div style={{ fontSize: 24, fontWeight: 800, color:"#128b02" }}>
+        {savings === undefined ? (
+          <span style={{ fontWeight: 600, fontSize: 14 }}>Warte auf Daten...</span>
+        ) : (
+          <>
+            <span>{(savings >= 0 ? "+" : "") + Math.round(savings).toLocaleString()}</span>
+            <span style={{ fontSize: 24, fontWeight: 600 }}> CHF</span>
+          </>
+        )}
+      </div>
+
+  
+    </div>
+
       {/* POWER */}
       <h2>Power (W)</h2>
       <ResponsiveContainer width="100%" height={250}>
@@ -216,14 +303,17 @@ export default function App() {
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="timeLabel" />
           <YAxis unit=" W" />
-          <Tooltip formatter={(value, name, props) => value}/>
-          <Line type="monotone"
-           dataKey="power" 
-           name="Power"
-           stroke="#ffce0bff"
-            dot={false}
-            
-            />
+          <Tooltip formatter={(value) => value as any} />
+          {SETUPS.map((s) => (
+            <Line
+                key={s.key}
+                type="monotone"
+                dataKey={`power_${s.key}`}
+                name={`Power (${DEVICE_META[s.key].label})`}
+                stroke={DEVICE_META[s.key].color}
+                dot={false}
+              />
+          ))}
         </LineChart>
       </ResponsiveContainer>
 
@@ -233,10 +323,17 @@ export default function App() {
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="timeLabel" />
           <YAxis unit=" CHF" />
-          <Tooltip 
-            formatter={(value, name, props) => (value ? Math.round(value) : 0) + " CHF"}
-          />
-          <Line type="monotone" name="Energiekosten" dataKey="strompreis" stroke="#1900ffff" dot={false} />
+          <Tooltip formatter={(value) => ((value ? Math.round(value as number) : 0) + " CHF") as any} />
+          {SETUPS.map((s) => (
+            <Line
+              key={s.key}
+              type="monotone"
+              dataKey={`strompreis_${s.key}`}
+              name={`Energiekosten (${DEVICE_META[s.key].label})`}
+              stroke={DEVICE_META[s.key].color}
+              dot={false}
+            />
+          ))}
         </LineChart>
       </ResponsiveContainer>
 
@@ -246,10 +343,17 @@ export default function App() {
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="timeLabel" />
           <YAxis unit=" kg/kWh" />
-          <Tooltip 
-            formatter={(value, name, props) => Math.round(value*100)/100}
-          />
-          <Line type="monotone" name="Entfeuchtungseffizienz" dataKey="entfeuchtungseffizienz" stroke="#1bad3dff" dot={false} />
+          <Tooltip formatter={(value) => Math.round((value as number) * 100) / 100 as any} />
+          {SETUPS.map((s) => (
+            <Line
+              key={s.key}
+              type="monotone"
+              dataKey={`entfeuchtungseffizienz_${s.key}`}
+              name={`Effizienz (${DEVICE_META[s.key].label})`}
+              stroke={DEVICE_META[s.key].color}
+              dot={false}
+            />
+          ))}
         </LineChart>
       </ResponsiveContainer>
 
@@ -259,13 +363,19 @@ export default function App() {
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="timeLabel" />
           <YAxis unit=" kg/h" />
-          <Tooltip 
-            formatter={(value, name, props) => Math.round(value*1000)/1000}
-          />
-          <Line type="monotone" name="Differenz Wasserinhalt" dataKey="differenz_wasserinhalt" stroke="#1f10f1ff" dot={false} />
+          <Tooltip formatter={(value) => Math.round((value as number) * 1000) / 1000 as any} />
+          {SETUPS.map((s) => (
+            <Line
+              key={s.key}
+              type="monotone"
+              dataKey={`differenz_wasserinhalt_${s.key}`}
+              name={`Differenz Wasserinhalt (${DEVICE_META[s.key].label})`}
+              stroke={DEVICE_META[s.key].color}
+              dot={false}
+            />
+          ))}
         </LineChart>
       </ResponsiveContainer>
-
 
       {/* TEMPERATURE */}
       <h2>Temperature (°C)</h2>
@@ -274,40 +384,43 @@ export default function App() {
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="timeLabel" />
           <YAxis unit=" °C" />
-          <Tooltip 
-              formatter={(value, name, props) => value + "°C"}
+          <Tooltip formatter={(value) => `${value} °C`} />
 
-          />
-          <Line
-            type="monotone"
-            dataKey="temperature1"
-            stroke="#ff7300"
-            name="Temperatur (H&T 1)"
-            dot={false}
-          />
+          {Object.entries(SENSOR_META).map(([mac, meta]) => (
+            <Line
+              key={mac}
+              type="monotone"
+              dataKey={`temp_${mac}`}
+              name={meta.name}
+              stroke={meta.color}
+              dot={false}
+            />
+          ))}
         </LineChart>
       </ResponsiveContainer>
+
 
       {/* HUMIDITY */}
-      <h2>Relative Luftfeuchtigkeit (%) (H&T 1)</h2>
-      <ResponsiveContainer width="100%" height={250}>
-        <LineChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="timeLabel" />
-          <YAxis unit=" %" domain={[30, 80]} />
-          <Tooltip 
-            formatter={(value, name, props) => value + "%"}
+    <h2>Relative Luftfeuchtigkeit (%)</h2>
+    <ResponsiveContainer width="100%" height={250}>
+      <LineChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis dataKey="timeLabel" />
+        <YAxis unit=" %" domain={[30, 80]} />
+        <Tooltip formatter={(value) => `${value} %`} />
 
-          />
+        {Object.entries(SENSOR_META).map(([mac, meta]) => (
           <Line
+            key={mac}
             type="monotone"
-            dataKey="humidity1"
-            stroke="#0088FE"
-            name="Luftfeuchtigkeit"
+            dataKey={`hum_${mac}`}
+            name={meta.name}
+            stroke={meta.color}
             dot={false}
           />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
+        ))}
+      </LineChart>
+    </ResponsiveContainer>
+  </div>
   );
 }
