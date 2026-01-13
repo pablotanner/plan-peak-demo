@@ -9,19 +9,34 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
+// Only use these two for now:
+const SENSOR1 = "7c:c6:b6:73:9d:6d"; // Prozessluft
+const SENSOR2 = "f8:44:77:05:40:48"; // Trockenluft
+
+
+
+
 // sensor gives different data at different times:
 // time, humidity, temperature every 1 minute
 // time, power, energy every 5 seconds
 type UnifiedPoint = {
   ts: number;
   timeLabel: string;
+
   power?: number;
   energy?: number;
-  temperature?: number;
-  humidity?: number;
-  strompreis?: number; 
-  differenz_wasserinhalt?: number; // kg/h
-  entfeuchtungseffizienz?: number;  // in kg/kWh
+
+  // sensor 1 (Prozessluft)
+  temperature1?: number;
+  humidity1?: number;
+
+  // sensor 2 (Trockenluft)
+  temperature2?: number;
+  humidity2?: number;
+
+  strompreis?: number;
+  differenz_wasserinhalt?: number;
+  entfeuchtungseffizienz?: number;
 };
 
 
@@ -58,54 +73,72 @@ function minuteBucket(ts: number) {
   return Math.floor(ts / ONE_MINUTE_MS) * ONE_MINUTE_MS;
 }
 
-function normalizeMeasurements(measurements: any[]): UnifiedPoint[] {
-  const sorted = [...measurements].sort((a, b) => {
-    const ta = a.data.timestamp ?? Date.parse(a.receivedAt);
-    const tb = b.data.timestamp ?? Date.parse(b.receivedAt);
-    return ta - tb;
-  });
 
-  let lastTemp: number | undefined;
-  let lastHum: number | undefined;
-  let lastEnergy = 0;
+// Backend row shape (minimal fields we use)
+type DbRow = {
+  ts: string;                // ISO string
+  received_at?: string;      // ISO
+  device_id?: string;
 
-  // minuteTs → UnifiedPoint
+  sensor_mac?: string | null;
+
+  // Power meter fields
+  act_power?: number | null;
+
+  // Environment fields
+  temperature?: number | null;
+  humidity?: number | null;
+  battery?: number | null;
+};
+
+function normalizeMeasurements(rows: DbRow[]): UnifiedPoint[] {
+  const sorted = [...rows].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+
   const buckets = new Map<number, UnifiedPoint>();
 
-  for (const m of sorted) {
-    const rawTs =
-      typeof m.data.timestamp === "number"
-        ? m.data.timestamp
-        : Date.parse(m.receivedAt);
+  let lastEnergy = 0;
 
-    const minuteTs = minuteBucket(rawTs);
+  // hold last-known env values per sensor so lines don’t drop to undefined
+  let lastT1: number | undefined;
+  let lastH1: number | undefined;
+  let lastT2: number | undefined;
+  let lastH2: number | undefined;
+
+  for (const r of sorted) {
+    const rawTsMs = Date.parse(r.ts); // ts is TIMESTAMPTZ -> ISO string
+    const minuteTs = minuteBucket(rawTsMs);
 
     let p = buckets.get(minuteTs);
     if (!p) {
       p = {
         ts: minuteTs,
-        timeLabel: new Date(minuteTs).toLocaleTimeString()
+        timeLabel: new Date(minuteTs).toLocaleTimeString(),
       };
       buckets.set(minuteTs, p);
     }
 
-    
-    /* ---------- TEMP / HUM (slow, 1/min) ---------- */
-    if (typeof m.data.temperature === "number") {
-      lastTemp = m.data.temperature;
+    // --- Environment: route by sensor_mac ---
+    const mac = (r.sensor_mac ?? "").toLowerCase();
+
+    if (mac === SENSOR1) {
+      if (typeof r.temperature === "number") lastT1 = r.temperature;
+      if (typeof r.humidity === "number") lastH1 = r.humidity;
+    } else if (mac === SENSOR2) {
+      if (typeof r.temperature === "number") lastT2 = r.temperature;
+      if (typeof r.humidity === "number") lastH2 = r.humidity;
     }
-    if (typeof m.data.humidity === "number") {
-      lastHum = m.data.humidity;
-    }
 
-    if (lastTemp !== undefined) p.temperature = lastTemp;
-    if (lastHum !== undefined) p.humidity = lastHum;
+    if (lastT1 !== undefined) p.temperature1 = lastT1;
+    if (lastH1 !== undefined) p.humidity1 = lastH1;
+    if (lastT2 !== undefined) p.temperature2 = lastT2;
+    if (lastH2 !== undefined) p.humidity2 = lastH2;
 
-    /* ---------- POWER / ENERGY (fast) ---------- */
-    if (m.data.em) {
-      p.power = m.data.em.act_power;
+    // --- Power meter ---
+    if (typeof r.act_power === "number") {
+      p.power = r.act_power;
 
-      lastEnergy += m.data.em.act_power * (5 / 3600);
+      // you were assuming power points every 5s; we keep that assumption
+      lastEnergy += r.act_power * (5 / 3600);
       p.energy = Number(lastEnergy.toFixed(2));
 
       p.strompreis =
@@ -114,53 +147,51 @@ function normalizeMeasurements(measurements: any[]): UnifiedPoint[] {
         ZEITRAUM *
         STUNDEN_PRO_JAHR *
         GLEICHZEITIGKEIT;
-
-      // Input
-      const prozessLuft = {
-        VOLUMENSTROM: 50, // m^3 / h
-        DICHTE: 1.12, // kg/m^3
-        // Temperatur vor maschine
-        TEMPERATUR: p.temperature,
-        RELATIVE_HUMIDITY: p.humidity,
-        ABSOLUTE_HUMIDITY: calculateAbsoluteHumidity(p.temperature, p.humidity),
-        WASSERINHALT: undefined // kg/h
-      }
-      prozessLuft.WASSERINHALT = prozessLuft.VOLUMENSTROM * prozessLuft.DICHTE * prozessLuft.ABSOLUTE_HUMIDITY / 1000
-
-    
-      const X_trockenLuftTemp = p.temperature;
-      const X_humidity = p.humidity - 10;
-      // Output
-      const trockenLuft = {
-        VOLUMENSTROM: 50, // m^3 / h
-        DICHTE: 1.12, // kg/m^3
-        // Temperatur nach der Maschine
-        TEMPERATUR: X_trockenLuftTemp,
-        RELATIVE_HUMIDITY: X_humidity,
-        ABSOLUTE_HUMIDITY: calculateAbsoluteHumidity(X_trockenLuftTemp, X_humidity),
-        WASSERINHALT: undefined // kg/h
-      }
-      trockenLuft.WASSERINHALT = trockenLuft.VOLUMENSTROM * trockenLuft.DICHTE * trockenLuft.ABSOLUTE_HUMIDITY / 1000
-
-      p.differenz_wasserinhalt = Math.abs(prozessLuft.WASSERINHALT - trockenLuft.WASSERINHALT)
-
-      p.entfeuchtungseffizienz = p.differenz_wasserinhalt / (p.power / 1000)
-
-
     }
 
+    // --- Derived metrics (need sensor 1 + sensor 2 + power) ---
+    if (
+      p.power !== undefined &&
+      p.temperature1 !== undefined &&
+      p.humidity1 !== undefined &&
+      p.temperature2 !== undefined &&
+      p.humidity2 !== undefined
+    ) {
+      // Input (sensor 1)
+      const prozessLuft = {
+        VOLUMENSTROM: 50, // m^3 / h
+        DICHTE: 1.12,     // kg/m^3
+        TEMPERATUR: p.temperature1,
+        RELATIVE_HUMIDITY: p.humidity1,
+      };
+      const abs1 = calculateAbsoluteHumidity(prozessLuft.TEMPERATUR, prozessLuft.RELATIVE_HUMIDITY);
+      const wasser1 = prozessLuft.VOLUMENSTROM * prozessLuft.DICHTE * abs1 / 1000;
+
+      // Output (sensor 2)
+      const trockenLuft = {
+        VOLUMENSTROM: 50,
+        DICHTE: 1.12,
+        TEMPERATUR: p.temperature2,
+        RELATIVE_HUMIDITY: p.humidity2,
+      };
+      const abs2 = calculateAbsoluteHumidity(trockenLuft.TEMPERATUR, trockenLuft.RELATIVE_HUMIDITY);
+      const wasser2 = trockenLuft.VOLUMENSTROM * trockenLuft.DICHTE * abs2 / 1000;
+
+      p.differenz_wasserinhalt = Math.abs(wasser1 - wasser2);
+      p.entfeuchtungseffizienz = p.differenz_wasserinhalt / (p.power / 1000);
+    }
   }
 
   const now = Date.now();
-
-  return Array.from(buckets.values()).filter(
-    (p) => p.ts >= now - WINDOW_MS
-  );
+  return Array.from(buckets.values()).filter((p) => p.ts >= now - WINDOW_MS);
 }
+
 
 export default function App() {
   const [data, setData] = useState<UnifiedPoint[]>([]);
 
+  console.log(data)
+  
   useEffect(() => {
     const fetchData = async () => {
       const res = await fetch("https://plan-peak-backendnew.vercel.app/measurements");
@@ -174,8 +205,6 @@ export default function App() {
     return () => clearInterval(id);
   }, []);
 
-
-  console.log(data)
 
   return (
     <div style={{ padding: 20 }}>
@@ -251,16 +280,16 @@ export default function App() {
           />
           <Line
             type="monotone"
-            dataKey="temperature"
+            dataKey="temperature1"
             stroke="#ff7300"
-            name="Temperatur"
+            name="Temperatur (H&T 1)"
             dot={false}
           />
         </LineChart>
       </ResponsiveContainer>
 
       {/* HUMIDITY */}
-      <h2>Relative Luftfeuchtigkeit (%)</h2>
+      <h2>Relative Luftfeuchtigkeit (%) (H&T 1)</h2>
       <ResponsiveContainer width="100%" height={250}>
         <LineChart data={data}>
           <CartesianGrid strokeDasharray="3 3" />
@@ -272,7 +301,7 @@ export default function App() {
           />
           <Line
             type="monotone"
-            dataKey="humidity"
+            dataKey="humidity1"
             stroke="#0088FE"
             name="Luftfeuchtigkeit"
             dot={false}
