@@ -121,7 +121,7 @@ function calculateAbsoluteHumidity(temperatureC: number, relativeHumidity: numbe
 
 // ---------- Normalization ----------
 function normalizeMeasurements(rows: DbRow[]): UnifiedPoint[] {
-  const sorted = [...rows].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+  const sorted = [...rows].sort((a, b) => Date.parse(a.received_at) - Date.parse(b.received_at));
 
   const buckets = new Map<number, UnifiedPoint>();
 
@@ -133,7 +133,8 @@ function normalizeMeasurements(rows: DbRow[]): UnifiedPoint[] {
   for (const s of SETUPS) lastEnergyByDevice[s.deviceId] = 0;
 
   for (const r of sorted) {
-    const tsMs = Date.parse(r.ts ?? r.received_at);
+
+    const tsMs = Date.parse(r.received_at);
     const minuteTs = minuteBucket(tsMs);
 
     let p = buckets.get(minuteTs);
