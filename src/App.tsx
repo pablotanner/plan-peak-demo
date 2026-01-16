@@ -75,7 +75,7 @@ type SetupKey = typeof SETUPS[number]["key"];
 
 // ---------- Time window ----------
 const ONE_MINUTE_MS = 60_000;
-const WINDOW_MINUTES = 10;
+const WINDOW_MINUTES = 30;
 const WINDOW_MS = WINDOW_MINUTES * 60 * 1000;
 
 // ---------- Price calc ----------
@@ -213,11 +213,11 @@ function normalizeMeasurements(rows: DbRow[]): UnifiedPoint[] {
       if (power !== undefined && proc && dry) {
         // Input (Prozessluft)
         const abs1 = calculateAbsoluteHumidity(proc.t, proc.h);
-        const wasser1 = 50 * 1.12 * abs1 / 1000;
+        const wasser1 = 300 * 1.12 * abs1 / 1000;
 
         // Output (Trockenluft)
         const abs2 = calculateAbsoluteHumidity(dry.t, dry.h);
-        const wasser2 = 50 * 1.12 * abs2 / 1000;
+        const wasser2 = 300 * 1.12 * abs2 / 1000;
 
         const diff = Math.abs(wasser1 - wasser2);
         p[`differenz_wasserinhalt_${key}`] = diff;
@@ -232,14 +232,14 @@ function normalizeMeasurements(rows: DbRow[]): UnifiedPoint[] {
 
 export default function App() {
   const [data, setData] = useState<UnifiedPoint[]>([]);
-
+  console.log(data)
   useEffect(() => {
     const fetchData = async () => {
       const res = await fetch("https://plan-peak-backendnew.vercel.app/measurements");
       const json = await res.json();
       setData(normalizeMeasurements(json.measurements));
-    };
 
+    };
     fetchData();
     const id = setInterval(fetchData, 5000);
     return () => clearInterval(id);
@@ -279,7 +279,7 @@ export default function App() {
       }}
     >
       <div style={{ fontWeight: 700, fontSize: 20}}>
-        Ersparnisse auf 10 Jahre:
+        Ersparnisse auf 20 Jahre:
       </div>
 
       <div style={{ fontSize: 24, fontWeight: 800, color:"#128b02" }}>
