@@ -213,13 +213,15 @@ function normalizeMeasurements(rows: DbRow[]): UnifiedPoint[] {
       if (power !== undefined && proc && dry) {
         // Input (Prozessluft)
         const abs1 = calculateAbsoluteHumidity(proc.t, proc.h);
-        const wasser1 = 300 * 1.12 * abs1 / 1000;
+        const wasser1 = 350 * 1.12 * abs1 / 1000;
 
         // Output (Trockenluft)
         const abs2 = calculateAbsoluteHumidity(dry.t, dry.h);
-        const wasser2 = 300 * 1.12 * abs2 / 1000;
+        const wasser2 = 350 * 1.12 * abs2 / 1000;
 
         const diff = Math.abs(wasser1 - wasser2);
+        p[`abs1_${key}`] = abs1
+        p[`abs2_${key}`] = abs2
         p[`differenz_wasserinhalt_${key}`] = diff;
         p[`entfeuchtungseffizienz_${key}`] = diff / (power / 1000);
       }
@@ -419,6 +421,38 @@ export default function App() {
             dot={false}
           />
         ))}
+      </LineChart>
+    </ResponsiveContainer>
+
+          {/* HUMIDITY */}
+    <h2>Abs Luftfeuchtigkeit</h2>
+    <ResponsiveContainer width="100%" height={250}>
+      <LineChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis dataKey="timeLabel" />
+        <YAxis unit="" />
+          <Tooltip formatter={(value) => Math.round((value as number) * 1000) / 1000 as any} />
+        {SETUPS.map((s) => (
+          <>
+          <Line
+              key={s.key}
+              type="monotone"
+              dataKey={`abs1_${s.key}`}
+              name={`Abs 1 (${DEVICE_META[s.key].label})`}
+              stroke={DEVICE_META[s.key].color}
+              dot={false}
+            />
+             <Line
+              key={s.key}
+              type="monotone"
+              dataKey={`abs2_${s.key}`}
+              name={`Abs 2 (${DEVICE_META[s.key].label})`}
+              stroke={DEVICE_META[s.key].color}
+              dot={false}
+            />
+          </>
+            
+          ))}        
       </LineChart>
     </ResponsiveContainer>
   </div>
