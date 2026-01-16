@@ -217,7 +217,7 @@ function normalizeMeasurements(rows: DbRow[]): UnifiedPoint[] {
 
         // Output (Trockenluft)
         const abs2 = calculateAbsoluteHumidity(dry.t, dry.h);
-        const wasser2 = 450 * 1.12 * abs2 / 1000;
+        const wasser2 = 350 * 1.12 * abs2 / 1000;
 
         const diff = Math.abs(wasser1 - wasser2);
         p[`abs1_${key}`] = abs1
