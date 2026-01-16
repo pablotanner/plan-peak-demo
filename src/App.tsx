@@ -75,7 +75,7 @@ type SetupKey = typeof SETUPS[number]["key"];
 
 // ---------- Time window ----------
 const ONE_MINUTE_MS = 60_000;
-const WINDOW_MINUTES = 30;
+const WINDOW_MINUTES = 35;
 const WINDOW_MS = WINDOW_MINUTES * 60 * 1000;
 
 // ---------- Price calc ----------
@@ -213,11 +213,11 @@ function normalizeMeasurements(rows: DbRow[]): UnifiedPoint[] {
       if (power !== undefined && proc && dry) {
         // Input (Prozessluft)
         const abs1 = calculateAbsoluteHumidity(proc.t, proc.h);
-        const wasser1 = 350 * 1.12 * abs1 / 1000;
+        const wasser1 = 450 * 1.12 * abs1 / 1000;
 
         // Output (Trockenluft)
         const abs2 = calculateAbsoluteHumidity(dry.t, dry.h);
-        const wasser2 = 350 * 1.12 * abs2 / 1000;
+        const wasser2 = 450 * 1.12 * abs2 / 1000;
 
         const diff = Math.abs(wasser1 - wasser2);
         p[`abs1_${key}`] = abs1
