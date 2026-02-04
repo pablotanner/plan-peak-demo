@@ -61,8 +61,8 @@ const SETUPS = [
     deviceId: DEVICE1,
     procMac: SENSOR1,
     dryMac: SENSOR2,
-    procLS:135,
-    dryLS:135,
+    procLS:390,
+    dryLS:370,
   },
   {
     key: "d2",
