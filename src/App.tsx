@@ -1,5 +1,3 @@
-In the code below, make it so that theres a input field to modify the volumenstrom, right now its hardcoded for both prozessluft and trockenluft at 450/350, so add input fields so these can be controlled live. Make minimal changes to the code and also make it print the value of the selected volumenstrom in the console.log we already have (console.log(data))
-
 import { useEffect, useState } from "react";
 import {
   LineChart,
