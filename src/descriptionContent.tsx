@@ -1,6 +1,5 @@
 import ReactMarkdown from "react-markdown";
 
-// Paste your description as plain Markdown here.
 const MARKDOWN = `
 ## Anleitung – Messplattform zur Leistungs- und Wirtschaftlichkeitsbewertung von Entfeuchtungsgeräten
 

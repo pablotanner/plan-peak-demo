@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import "./App.css";
 import { DescriptionSidebar } from "./DescriptionSidebar";
 import { DescriptionContent } from "./descriptionContent";
+import { DebugPanel } from "./DebugPanel";
 import {
   LineChart,
   Line,
@@ -80,8 +81,7 @@ const SETUPS = [
 
 // Time Window
 const ONE_MINUTE_MS = 60000;
-const WINDOW_MINUTES = 10; // How many entries to send
-const WINDOW_MS = WINDOW_MINUTES * 60 * 1000;
+const WINDOW_MINUTES = 30; // Messzeitraum default
 
 // Price Calculation
 const STROMPREIS_CHF = 0.28;
@@ -135,6 +135,7 @@ type Settings = {
   strompreis: number;       // CHF/kWh
   zeitraum: number;         // Jahre
   gleichzeitigkeit: number; // 0-1
+  messzeitraum: number;     // Minuten (Anzeigefenster)
   devices: Record<string, DeviceSettings>;
 };
 
@@ -142,6 +143,7 @@ const DEFAULT_SETTINGS: Settings = {
   strompreis: STROMPREIS_CHF,
   zeitraum: ZEITRAUM,
   gleichzeitigkeit: GLEICHZEITIGKEIT,
+  messzeitraum: WINDOW_MINUTES,
   devices: Object.fromEntries(SETUPS.map((s) => [s.key, { procLS: s.procLS, dryLS: s.dryLS }])),
 };
 
@@ -257,11 +259,13 @@ function normalizeMeasurements(rows: DbRow[], settings: Settings = DEFAULT_SETTI
   }
 
   const now = Date.now();
-  return Array.from(buckets.values()).filter((p) => (p.ts as number) >= now - WINDOW_MS);
+  const windowMs = settings.messzeitraum * 60 * 1000;
+  return Array.from(buckets.values()).filter((p) => (p.ts as number) >= now - windowMs);
 }
 
 export default function App() {
   const [data, setData] = useState<UnifiedPoint[]>([]);
+  const [rawMeasurements, setRawMeasurements] = useState<unknown[]>([]);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [descOpen, setDescOpen] = useState(false);
 
@@ -269,7 +273,9 @@ export default function App() {
     const fetchData = async () => {
       const res = await fetch("https://plan-peak-backendnew.vercel.app/measurements");
       const json = await res.json();
-      setData(normalizeMeasurements(json.measurements, settings));
+      const measurements: DbRow[] = json.measurements ?? [];
+      setRawMeasurements(measurements);
+      setData(normalizeMeasurements(measurements, settings));
     };
     fetchData();
     const id = setInterval(fetchData, 5000);
@@ -300,7 +306,7 @@ export default function App() {
         style={{ maxWidth: "40%", height: "auto", marginBottom: 20}}
       />
         <button className="read-more-btn" onClick={() => setDescOpen(true)}>
-          Anleitung öffnen ›
+          Anleitung öffnen
         </button>
 
         <DescriptionSidebar
@@ -359,6 +365,18 @@ export default function App() {
                 max={1}
                 step={0.05}
                 onChange={(e) => setGlobal("gleichzeitigkeit", Number(e.target.value))}
+                style={{ width: 100, padding: "4px 8px", borderRadius: 4, border: "1px solid #ccc" }}
+              />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span>Messzeitraum (Minuten)</span>
+              <input
+                type="number"
+                value={settings.messzeitraum}
+                min={1}
+                max={120}
+                step={1}
+                onChange={(e) => setGlobal("messzeitraum", Number(e.target.value))}
                 style={{ width: 100, padding: "4px 8px", borderRadius: 4, border: "1px solid #ccc" }}
               />
             </label>
@@ -559,6 +577,12 @@ export default function App() {
           ))}        
       </LineChart>
     </ResponsiveContainer>
+{/* DEBUG PANEL */}
+      <DebugPanel
+        rawData={rawMeasurements}
+        settings={settings}
+        computedData={data}
+      />
   </div>
   );
 }
