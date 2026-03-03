@@ -75,7 +75,7 @@ type SetupKey = typeof SETUPS[number]["key"];
 
 // ---------- Time window ----------
 const ONE_MINUTE_MS = 60_000;
-const WINDOW_MINUTES = 35;
+const WINDOW_MINUTES = 10;
 const WINDOW_MS = WINDOW_MINUTES * 60 * 1000;
 
 // ---------- Price calc ----------
@@ -120,7 +120,7 @@ function calculateAbsoluteHumidity(temperatureC: number, relativeHumidity: numbe
 }
 
 // ---------- Normalization ----------
-function normalizeMeasurements(rows: DbRow[]): UnifiedPoint[] {
+function normalizeMeasurements(rows: DbRow[], volumenstrom1 = 450, volumenstrom2 = 350): UnifiedPoint[] {
   const sorted = [...rows].sort((a, b) => Date.parse(a.received_at) - Date.parse(b.received_at));
 
   const buckets = new Map<number, UnifiedPoint>();
@@ -214,11 +214,11 @@ function normalizeMeasurements(rows: DbRow[]): UnifiedPoint[] {
       if (power !== undefined && proc && dry) {
         // Input (Prozessluft)
         const abs1 = calculateAbsoluteHumidity(proc.t, proc.h);
-        const wasser1 = 450 * 1.12 * abs1 / 1000;
+        const wasser1 = volumenstrom1 * 1.12 * abs1 / 1000;
 
         // Output (Trockenluft)
         const abs2 = calculateAbsoluteHumidity(dry.t, dry.h);
-        const wasser2 = 350 * 1.12 * abs2 / 1000;
+        const wasser2 = volumenstrom2 * 1.12 * abs2 / 1000;
 
         const diff = Math.abs(wasser1 - wasser2);
         p[`abs1_${key}`] = abs1
@@ -235,18 +235,20 @@ function normalizeMeasurements(rows: DbRow[]): UnifiedPoint[] {
 
 export default function App() {
   const [data, setData] = useState<UnifiedPoint[]>([]);
+  const [volumenstrom1, setVolumenstrom1] = useState(450);
+  const [volumenstrom2, setVolumenstrom2] = useState(350);
   console.log(data)
   useEffect(() => {
     const fetchData = async () => {
       const res = await fetch("https://plan-peak-backendnew.vercel.app/measurements");
       const json = await res.json();
-      setData(normalizeMeasurements(json.measurements));
+      setData(normalizeMeasurements(json.measurements, volumenstrom1, volumenstrom2));
 
     };
     fetchData();
     const id = setInterval(fetchData, 5000);
     return () => clearInterval(id);
-  }, []);
+  }, [volumenstrom1, volumenstrom2]);
 
     // pick last (latest) point that has a numeric value for a given key
   function lastNumber(data: UnifiedPoint[], key: string): number | undefined {
@@ -269,6 +271,12 @@ export default function App() {
     <div style={{ padding: 20 }}>
       <h1>Qubiq Demo</h1>
 
+      <img
+        src="/skizze.PNG"
+        alt="System Skizze"
+        style={{ maxWidth: "100%", height: "auto", marginBottom: 20}}
+      />
+
       <div
       style={{
         padding: "6px 14px",
@@ -283,6 +291,31 @@ export default function App() {
     >
       <div style={{ fontWeight: 700, fontSize: 20}}>
         Ersparnisse auf 20 Jahre:
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap", marginTop: 8 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
+          Volumenstrom Prozessluft (m³/h):
+          <input
+            type="number"
+            value={volumenstrom1}
+            min={0}
+            step={10}
+            onChange={(e) => setVolumenstrom1(Number(e.target.value))}
+            style={{ width: 80, padding: "2px 6px", borderRadius: 4, border: "1px solid #ccc" }}
+          />
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
+          Volumenstrom Trockenluft (m³/h):
+          <input
+            type="number"
+            value={volumenstrom2}
+            min={0}
+            step={10}
+            onChange={(e) => setVolumenstrom2(Number(e.target.value))}
+            style={{ width: 80, padding: "2px 6px", borderRadius: 4, border: "1px solid #ccc" }}
+          />
+        </label>
       </div>
 
       <div style={{ fontSize: 24, fontWeight: 800, color:"#128b02" }}>
