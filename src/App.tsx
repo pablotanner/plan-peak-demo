@@ -61,6 +61,8 @@ const SETUPS = [
     deviceId: DEVICE1,
     procMac: SENSOR1,
     dryMac: SENSOR2,
+    procLS:390,
+    dryLS:370,
   },
   {
     key: "d2",
@@ -68,6 +70,8 @@ const SETUPS = [
     deviceId: DEVICE2,
     procMac: SENSOR3,
     dryMac: SENSOR4,
+    procLS:500,
+    dryLS:350,
   },
 ] as const;
 
@@ -120,7 +124,9 @@ function calculateAbsoluteHumidity(temperatureC: number, relativeHumidity: numbe
 }
 
 // ---------- Normalization ----------
-function normalizeMeasurements(rows: DbRow[], volumenstrom1 = 450, volumenstrom2 = 350): UnifiedPoint[] {
+type VolumenstromOverrides = Record<string, { procLS: number; dryLS: number }>;
+
+function normalizeMeasurements(rows: DbRow[], overrides?: VolumenstromOverrides): UnifiedPoint[] {
   const sorted = [...rows].sort((a, b) => Date.parse(a.received_at) - Date.parse(b.received_at));
 
   const buckets = new Map<number, UnifiedPoint>();
@@ -212,13 +218,16 @@ function normalizeMeasurements(rows: DbRow[], volumenstrom1 = 450, volumenstrom2
         : null;
 
       if (power !== undefined && proc && dry) {
+        const procLS = overrides?.[s.key]?.procLS ?? s.procLS;
+        const dryLS  = overrides?.[s.key]?.dryLS  ?? s.dryLS;
+
         // Input (Prozessluft)
         const abs1 = calculateAbsoluteHumidity(proc.t, proc.h);
-        const wasser1 = volumenstrom1 * 1.12 * abs1 / 1000;
+        const wasser1 = procLS * 1.12 * abs1 / 1000;
 
         // Output (Trockenluft)
         const abs2 = calculateAbsoluteHumidity(dry.t, dry.h);
-        const wasser2 = volumenstrom2 * 1.12 * abs2 / 1000;
+        const wasser2 = dryLS * 1.12 * abs2 / 1000;
 
         const diff = Math.abs(wasser1 - wasser2);
         p[`abs1_${key}`] = abs1
@@ -235,20 +244,21 @@ function normalizeMeasurements(rows: DbRow[], volumenstrom1 = 450, volumenstrom2
 
 export default function App() {
   const [data, setData] = useState<UnifiedPoint[]>([]);
-  const [volumenstrom1, setVolumenstrom1] = useState(450);
-  const [volumenstrom2, setVolumenstrom2] = useState(350);
-  console.log(data)
+  const [volOverrides, setVolOverrides] = useState<VolumenstromOverrides>(
+    () => Object.fromEntries(SETUPS.map((s) => [s.key, { procLS: s.procLS, dryLS: s.dryLS }]))
+  );
+
+  console.log(data, "luftstrom etc:", SETUPS)
   useEffect(() => {
     const fetchData = async () => {
       const res = await fetch("https://plan-peak-backendnew.vercel.app/measurements");
       const json = await res.json();
-      setData(normalizeMeasurements(json.measurements, volumenstrom1, volumenstrom2));
-
+      setData(normalizeMeasurements(json.measurements, volOverrides));
     };
     fetchData();
     const id = setInterval(fetchData, 5000);
     return () => clearInterval(id);
-  }, [volumenstrom1, volumenstrom2]);
+  }, [volOverrides]);
 
     // pick last (latest) point that has a numeric value for a given key
   function lastNumber(data: UnifiedPoint[], key: string): number | undefined {
@@ -293,29 +303,44 @@ export default function App() {
         Ersparnisse auf 20 Jahre:
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap", marginTop: 8 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
-          Volumenstrom Prozessluft (m³/h):
-          <input
-            type="number"
-            value={volumenstrom1}
-            min={0}
-            step={10}
-            onChange={(e) => setVolumenstrom1(Number(e.target.value))}
-            style={{ width: 80, padding: "2px 6px", borderRadius: 4, border: "1px solid #ccc" }}
-          />
-        </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
-          Volumenstrom Trockenluft (m³/h):
-          <input
-            type="number"
-            value={volumenstrom2}
-            min={0}
-            step={10}
-            onChange={(e) => setVolumenstrom2(Number(e.target.value))}
-            style={{ width: 80, padding: "2px 6px", borderRadius: 4, border: "1px solid #ccc" }}
-          />
-        </label>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+        {SETUPS.map((s) => (
+          <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap", fontSize: 14 }}>
+            <strong style={{ minWidth: 80 }}>{DEVICE_META[s.key].label}:</strong>
+            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              Prozessluft (m³/h):
+              <input
+                type="number"
+                value={volOverrides[s.key]?.procLS ?? s.procLS}
+                min={0}
+                step={10}
+                onChange={(e) =>
+                  setVolOverrides((prev) => ({
+                    ...prev,
+                    [s.key]: { ...prev[s.key], procLS: Number(e.target.value) },
+                  }))
+                }
+                style={{ width: 80, padding: "2px 6px", borderRadius: 4, border: "1px solid #ccc" }}
+              />
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              Trockenluft (m³/h):
+              <input
+                type="number"
+                value={volOverrides[s.key]?.dryLS ?? s.dryLS}
+                min={0}
+                step={10}
+                onChange={(e) =>
+                  setVolOverrides((prev) => ({
+                    ...prev,
+                    [s.key]: { ...prev[s.key], dryLS: Number(e.target.value) },
+                  }))
+                }
+                style={{ width: 80, padding: "2px 6px", borderRadius: 4, border: "1px solid #ccc" }}
+              />
+            </label>
+          </div>
+        ))}
       </div>
 
       <div style={{ fontSize: 24, fontWeight: 800, color:"#128b02" }}>
