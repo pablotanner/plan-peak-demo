@@ -284,7 +284,7 @@ export default function App() {
       <img
         src="/skizze.PNG"
         alt="System Skizze"
-        style={{ maxWidth: "100%", height: "auto", marginBottom: 20}}
+        style={{ maxWidth: "40%", height: "auto", marginBottom: 20}}
       />
 
       <div
