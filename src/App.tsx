@@ -9,7 +9,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-// ---------- IDs ----------
+// IDs, do not change, this is what is sent by Shelly 
 const DEVICE1 = "shellyproem50-441d6475ac84";
 const DEVICE2 = "shellyproem50-441d6475ac84-AUSGANG2";
 
@@ -53,7 +53,7 @@ const DEVICE_META: Record<string, DeviceMeta> = {
 };
 
 
-// ---------- Config: add more devices easily ----------
+// Config to add more devices if needed
 const SETUPS = [
   {
     key: "d1",
@@ -75,20 +75,18 @@ const SETUPS = [
   },
 ] as const;
 
-type SetupKey = typeof SETUPS[number]["key"];
-
-// ---------- Time window ----------
-const ONE_MINUTE_MS = 60_000;
-const WINDOW_MINUTES = 10;
+// Time Window
+const ONE_MINUTE_MS = 60000;
+const WINDOW_MINUTES = 10; // How many entries to send
 const WINDOW_MS = WINDOW_MINUTES * 60 * 1000;
 
-// ---------- Price calc ----------
+// Price Calculation
 const STROMPREIS_CHF = 0.28;
 const ZEITRAUM = 20;
 const STUNDEN_PRO_JAHR = 24 * 365;
 const GLEICHZEITIGKEIT = 0.5;
 
-// ---------- Types ----------
+// Types
 type DbRow = {
   ts: string; // ISO
   received_at?: string;
@@ -106,16 +104,17 @@ type UnifiedPoint = {
   ts: number;
   timeLabel: string;
 
-  // Power/cost/metrics per setup (dynamic keys)
+  // Power/cost/metrics per setup
   // Example keys: power_d1, strompreis_d1, entfeuchtungseffizienz_d1, differenz_wasserinhalt_d1
   [k: string]: number | string | undefined;
 };
 
-// ---------- Helpers ----------
+// Helpers
 function minuteBucket(tsMs: number) {
   return Math.floor(tsMs / ONE_MINUTE_MS) * ONE_MINUTE_MS;
 }
 
+// Customized Absolute Humidity formula
 function calculateAbsoluteHumidity(temperatureC: number, relativeHumidity: number) {
   const saturationVaporPressure =
     6.112 * Math.exp((16 * temperatureC) / (243.12 + temperatureC));
@@ -123,10 +122,27 @@ function calculateAbsoluteHumidity(temperatureC: number, relativeHumidity: numbe
   return (216.7 * vaporPressure) / (temperatureC + 273.15);
 }
 
-// ---------- Normalization ----------
-type VolumenstromOverrides = Record<string, { procLS: number; dryLS: number }>;
+// Normalization
+type DeviceSettings = {
+  procLS: number; // Prozessluft Volumenstrom (m3/h)
+  dryLS: number;  // Trockenluft Volumenstrom (m3/h)
+};
 
-function normalizeMeasurements(rows: DbRow[], overrides?: VolumenstromOverrides): UnifiedPoint[] {
+type Settings = {
+  strompreis: number;       // CHF/kWh
+  zeitraum: number;         // Jahre
+  gleichzeitigkeit: number; // 0-1
+  devices: Record<string, DeviceSettings>;
+};
+
+const DEFAULT_SETTINGS: Settings = {
+  strompreis: STROMPREIS_CHF,
+  zeitraum: ZEITRAUM,
+  gleichzeitigkeit: GLEICHZEITIGKEIT,
+  devices: Object.fromEntries(SETUPS.map((s) => [s.key, { procLS: s.procLS, dryLS: s.dryLS }])),
+};
+
+function normalizeMeasurements(rows: DbRow[], settings: Settings = DEFAULT_SETTINGS): UnifiedPoint[] {
   const sorted = [...rows].sort((a, b) => Date.parse(a.received_at) - Date.parse(b.received_at));
 
   const buckets = new Map<number, UnifiedPoint>();
@@ -134,7 +150,7 @@ function normalizeMeasurements(rows: DbRow[], overrides?: VolumenstromOverrides)
   // last env per MAC (so lines stay continuous)
   const lastEnvByMac: Record<string, { t?: number; h?: number }> = {};
 
-  // energy integration per device (very simple; keeps your old assumption)
+  // energy integration per device
   const lastEnergyByDevice: Record<string, number> = {};
   for (const s of SETUPS) lastEnergyByDevice[s.deviceId] = 0;
 
@@ -167,7 +183,7 @@ function normalizeMeasurements(rows: DbRow[], overrides?: VolumenstromOverrides)
     const mac = (r.sensor_mac ?? "").toLowerCase();
     const devId = r.device_id ?? "";
 
-    // ---- Env: store by MAC and write to point keys (so we can chart all sensors) ----
+    // Env: store by MAC and write to point keys (so we can chart all sensors)
     if (mac) {
       if (!lastEnvByMac[mac]) lastEnvByMac[mac] = {};
       if (typeof r.temperature === "number") lastEnvByMac[mac].t = r.temperature;
@@ -180,7 +196,7 @@ function normalizeMeasurements(rows: DbRow[], overrides?: VolumenstromOverrides)
       if (h !== undefined) p[`hum_${mac}`] = h;
     }
 
-    // ---- Power: per device ----
+    // Power (per device)
     if (typeof r.act_power === "number" && devId) {
       // only assign if this device is part of SETUPS (otherwise ignore)
       const setup = SETUPS.find((s) => s.deviceId === devId);
@@ -189,21 +205,20 @@ function normalizeMeasurements(rows: DbRow[], overrides?: VolumenstromOverrides)
 
         p[`power_${key}`] = r.act_power;
 
-        // NOTE: your original code assumed power points every 5 seconds.
-        // Keeping that for now to minimize changes.
+        // Assume one power reading per 5 seconds for energy integration (we set this interval in Shelly settings)
         lastEnergyByDevice[devId] += r.act_power * (5 / 3600);
         p[`energy_${key}`] = Number(lastEnergyByDevice[devId].toFixed(2));
 
         p[`strompreis_${key}`] =
           (r.act_power / 1000) *
-          STROMPREIS_CHF *
-          ZEITRAUM *
+          settings.strompreis *
+          settings.zeitraum *
           STUNDEN_PRO_JAHR *
-          GLEICHZEITIGKEIT;
+          settings.gleichzeitigkeit;
       }
     }
 
-    // ---- Derived metrics per setup (needs proc+dry env + power for that setup) ----
+    // Derived metrics per setup (needs proc+dry env + power for that setup)
     for (const s of SETUPS) {
       const key = s.key;
 
@@ -218,8 +233,8 @@ function normalizeMeasurements(rows: DbRow[], overrides?: VolumenstromOverrides)
         : null;
 
       if (power !== undefined && proc && dry) {
-        const procLS = overrides?.[s.key]?.procLS ?? s.procLS;
-        const dryLS  = overrides?.[s.key]?.dryLS  ?? s.dryLS;
+        const procLS = settings.devices[s.key]?.procLS ?? s.procLS;
+        const dryLS  = settings.devices[s.key]?.dryLS  ?? s.dryLS;
 
         // Input (Prozessluft)
         const abs1 = calculateAbsoluteHumidity(proc.t, proc.h);
@@ -244,118 +259,134 @@ function normalizeMeasurements(rows: DbRow[], overrides?: VolumenstromOverrides)
 
 export default function App() {
   const [data, setData] = useState<UnifiedPoint[]>([]);
-  const [volOverrides, setVolOverrides] = useState<VolumenstromOverrides>(
-    () => Object.fromEntries(SETUPS.map((s) => [s.key, { procLS: s.procLS, dryLS: s.dryLS }]))
-  );
+  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
 
-  console.log(data, "luftstrom etc:", SETUPS)
   useEffect(() => {
     const fetchData = async () => {
       const res = await fetch("https://plan-peak-backendnew.vercel.app/measurements");
       const json = await res.json();
-      setData(normalizeMeasurements(json.measurements, volOverrides));
+      setData(normalizeMeasurements(json.measurements, settings));
     };
     fetchData();
     const id = setInterval(fetchData, 5000);
     return () => clearInterval(id);
-  }, [volOverrides]);
+  }, [settings]);
 
-    // pick last (latest) point that has a numeric value for a given key
-  function lastNumber(data: UnifiedPoint[], key: string): number | undefined {
-    for (let i = data.length - 1; i >= 0; i--) {
-      const v = data[i][key];
-      if (typeof v === "number" && Number.isFinite(v)) return v;
-    }
-    return undefined;
+
+  function setGlobal<K extends keyof Omit<Settings, "devices">>(key: K, value: number) {
+    setSettings((s) => ({ ...s, [key]: value }));
   }
 
-  const cost1 = lastNumber(data, "strompreis_d1"); // CHF (20 years)
-  const cost2 = lastNumber(data, "strompreis_d2");
-
-  const savings =
-    cost1 !== undefined && cost2 !== undefined ? (cost2 - cost1) : undefined;
-  // Positive savings means: Device 1 is cheaper than Device 2 (because cost2 - cost1 > 0)
+  function setDeviceParam(deviceKey: string, param: keyof DeviceSettings, value: number) {
+    setSettings((s) => ({
+      ...s,
+      devices: { ...s.devices, [deviceKey]: { ...s.devices[deviceKey], [param]: value } },
+    }));
+  }
 
 
   return (
     <div style={{ padding: 20 }}>
       <h1>Qubiq Demo</h1>
 
-      <img
+      <div style={{display:"flex", flexDirection:"row", gap:"10px", alignItems:"center"}}>
+        <img
         src="/skizze.PNG"
         alt="System Skizze"
         style={{ maxWidth: "40%", height: "auto", marginBottom: 20}}
       />
-
-      <div
-      style={{
-        padding: "6px 14px",
-        borderRadius: 4,
-        border: "1px solid #e6e8f0",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
-        flexWrap: "wrap",
-      }}
-    >
-      <div style={{ fontWeight: 700, fontSize: 20}}>
-        Ersparnisse auf 20 Jahre:
+       Beschreibung text 
       </div>
+      
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
-        {SETUPS.map((s) => (
-          <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap", fontSize: 14 }}>
-            <strong style={{ minWidth: 80 }}>{DEVICE_META[s.key].label}:</strong>
-            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              Prozessluft (m³/h):
+      {/*PARAMETER PANEL */}
+      <div style={{
+        padding: "12px",
+        borderRadius: 6,
+        border: "1px solid #d0d5e8",
+        fontSize: 14,
+      }}>
+        <h3 style={{ fontSize: 16, padding:0, margin:0, marginBottom:"10px" }}>Parameter</h3>
+
+        {/* Global parameters */}
+        <div style={{ marginBottom: 16}}>
+          <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 13, textTransform: "uppercase", color: "#a1a1a1" }}>
+            Allgemein
+          </div>
+          <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span>Strompreis (CHF/kWh)</span>
               <input
                 type="number"
-                value={volOverrides[s.key]?.procLS ?? s.procLS}
+                value={settings.strompreis}
                 min={0}
-                step={10}
-                onChange={(e) =>
-                  setVolOverrides((prev) => ({
-                    ...prev,
-                    [s.key]: { ...prev[s.key], procLS: Number(e.target.value) },
-                  }))
-                }
-                style={{ width: 80, padding: "2px 6px", borderRadius: 4, border: "1px solid #ccc" }}
+                step={0.01}
+                onChange={(e) => setGlobal("strompreis", Number(e.target.value))}
+                style={{ width: 100, padding: "4px 8px", borderRadius: 4, border: "1px solid #ccc" }}
               />
             </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              Trockenluft (m³/h):
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span>Betrachtungszeitraum (Jahre)</span>
               <input
                 type="number"
-                value={volOverrides[s.key]?.dryLS ?? s.dryLS}
+                value={settings.zeitraum}
+                min={1}
+                step={1}
+                onChange={(e) => setGlobal("zeitraum", Number(e.target.value))}
+                style={{ width: 100, padding: "4px 8px", borderRadius: 4, border: "1px solid #ccc" }}
+              />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span>Gleichzeitigkeit (0–1)</span>
+              <input
+                type="number"
+                value={settings.gleichzeitigkeit}
                 min={0}
-                step={10}
-                onChange={(e) =>
-                  setVolOverrides((prev) => ({
-                    ...prev,
-                    [s.key]: { ...prev[s.key], dryLS: Number(e.target.value) },
-                  }))
-                }
-                style={{ width: 80, padding: "2px 6px", borderRadius: 4, border: "1px solid #ccc" }}
+                max={1}
+                step={0.05}
+                onChange={(e) => setGlobal("gleichzeitigkeit", Number(e.target.value))}
+                style={{ width: 100, padding: "4px 8px", borderRadius: 4, border: "1px solid #ccc" }}
               />
             </label>
           </div>
-        ))}
-      </div>
+        </div>
 
-      <div style={{ fontSize: 24, fontWeight: 800, color:"#128b02" }}>
-        {savings === undefined ? (
-          <span style={{ fontWeight: 600, fontSize: 14 }}>Warte auf Daten...</span>
-        ) : (
-          <>
-            <span>{(savings >= 0 ? "+" : "") + Math.round(savings).toLocaleString()}</span>
-            <span style={{ fontSize: 24, fontWeight: 600 }}> CHF</span>
-          </>
-        )}
+        {/* Per-device volumenstrom */}
+        <div>
+          <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 13, textTransform: "uppercase", color: "#a1a1a1", letterSpacing: "0.05em" }}>
+            Volumenstrom
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {SETUPS.map((s) => (
+              <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
+                <strong style={{ minWidth: 90, color: DEVICE_META[s.key].color }}>{DEVICE_META[s.key].label}</strong>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span>Prozessluft (m³/h)</span>
+                  <input
+                    type="number"
+                    value={settings.devices[s.key]?.procLS ?? s.procLS}
+                    min={0}
+                    step={10}
+                    onChange={(e) => setDeviceParam(s.key, "procLS", Number(e.target.value))}
+                    style={{ width: 100, padding: "4px 8px", borderRadius: 4, border: "1px solid #ccc" }}
+                  />
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span>Trockenluft (m³/h)</span>
+                  <input
+                    type="number"
+                    value={settings.devices[s.key]?.dryLS ?? s.dryLS}
+                    min={0}
+                    step={10}
+                    onChange={(e) => setDeviceParam(s.key, "dryLS", Number(e.target.value))}
+                    style={{ width: 100, padding: "4px 8px", borderRadius: 4, border: "1px solid #ccc" }}
+                  />
+                </label>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
-
-  
-    </div>
 
       {/* POWER */}
       <h2>Power (W)</h2>
@@ -378,7 +409,7 @@ export default function App() {
         </LineChart>
       </ResponsiveContainer>
 
-      <h2>Energiekosten ({ZEITRAUM} Jahre)</h2>
+      <h2>Energiekosten ({settings.zeitraum} Jahre)</h2>
       <ResponsiveContainer width="100%" height={250}>
         <LineChart data={data}>
           <CartesianGrid strokeDasharray="3 3" />
