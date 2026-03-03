@@ -1,4 +1,7 @@
 import { useEffect, useState } from "react";
+import "./App.css";
+import { DescriptionSidebar } from "./DescriptionSidebar";
+import { DescriptionContent } from "./descriptionContent";
 import {
   LineChart,
   Line,
@@ -260,6 +263,7 @@ function normalizeMeasurements(rows: DbRow[], settings: Settings = DEFAULT_SETTI
 export default function App() {
   const [data, setData] = useState<UnifiedPoint[]>([]);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [descOpen, setDescOpen] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -287,7 +291,7 @@ export default function App() {
 
   return (
     <div style={{ padding: 20 }}>
-      <h1>Qubiq Demo</h1>
+      <h1 style={{margin:0, marginBottom:"0.5em", padding:0}}>Qubiq Demo</h1>
 
       <div style={{display:"flex", flexDirection:"row", gap:"10px", alignItems:"center"}}>
         <img
@@ -295,14 +299,24 @@ export default function App() {
         alt="System Skizze"
         style={{ maxWidth: "40%", height: "auto", marginBottom: 20}}
       />
-       Beschreibung text 
+        <button className="read-more-btn" onClick={() => setDescOpen(true)}>
+          Anleitung öffnen ›
+        </button>
+
+        <DescriptionSidebar
+          open={descOpen}
+          onClose={() => setDescOpen(false)}
+          title="Beschreibung"
+        >
+          <DescriptionContent />
+        </DescriptionSidebar>
       </div>
       
 
       {/*PARAMETER PANEL */}
       <div style={{
-        padding: "12px",
-        borderRadius: 6,
+        padding: "8px 12px",
+        borderRadius: 2,
         border: "1px solid #d0d5e8",
         fontSize: 14,
       }}>
@@ -515,7 +529,7 @@ export default function App() {
     </ResponsiveContainer>
 
           {/* HUMIDITY */}
-    <h2>Abs Luftfeuchtigkeit</h2>
+    <h2>Absolute Luftfeuchtigkeit</h2>
     <ResponsiveContainer width="100%" height={250}>
       <LineChart data={data}>
         <CartesianGrid strokeDasharray="3 3" />

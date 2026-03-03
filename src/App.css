@@ -1,8 +1,6 @@
 #root {
   max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+  padding: 1rem;
 }
 
 .logo {
@@ -39,4 +37,122 @@
 
 .read-the-docs {
   color: #888;
+}
+
+/* ── Sidebar / Drawer ─────────────────────────────────── */
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(2px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+  z-index: 100;
+}
+
+.sidebar-backdrop--visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sidebar-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100dvh;
+  width: min(480px, 92vw);
+  background: #fff;
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 101;
+}
+
+.sidebar-panel--open {
+  transform: translateX(0);
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid #e5e7eb;
+  flex-shrink: 0;
+}
+
+.sidebar-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #111;
+}
+
+.sidebar-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  color: #6b7280;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.sidebar-close:hover {
+  background: #f3f4f6;
+  color: #111;
+}
+
+.sidebar-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: #374151;
+}
+
+.sidebar-body h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 20px 0 6px;
+  color: #111;
+}
+
+.sidebar-body h3:first-child {
+  margin-top: 0;
+}
+
+.sidebar-body p {
+  margin: 0 0 12px;
+}
+
+.sidebar-body ul, .sidebar-body ol {
+  padding-left: 20px;
+  margin: 0 0 12px;
+}
+
+/* Read more button */
+.read-more-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: 1px solid #4374ce;
+  border-radius: 6px;
+  padding: 5px 14px;
+  font-size: 13px;
+  color: #557ec9;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.read-more-btn:hover {
+  background: #f3f4f6;
+  border-color: #374151;
+  color: #111;
 }
