@@ -10,7 +10,7 @@ Die Berechnungen basieren auf gemessenen Luftzuständen (Temperatur, relative Fe
 
 ---
 
-# 1️⃣ Betriebsart: Vergleich von zwei Geräten
+## 1️⃣ Betriebsart: Vergleich von zwei Geräten
 
 ### Messaufbau
 
@@ -88,7 +88,7 @@ Diese Werte bilden die Grundlage aller weiteren Berechnungen.
 
 ---
 
-# 2️⃣ Betriebsart: Einzelgerät-Analyse
+## 2️⃣ Betriebsart: Einzelgerät-Analyse
 
 Wird nur ein Gerät bewertet, können Fühler 3 und 4 frei im System positioniert werden.
 
@@ -103,7 +103,7 @@ Diese Variante dient der **thermodynamischen Prozessanalyse** und erlaubt die Be
 
 ---
 
-# Manuelle Eingaben in der Weboberfläche
+## Manuelle Eingaben in der Weboberfläche
 
 Für eine korrekte Bewertung sind folgende Parameter einzugeben:
 
@@ -117,7 +117,7 @@ Betriebsstunden = GLZ × 8'760
 
 ---
 
-# Ziel der Plattform
+## Ziel der Plattform
 
 Die Anwendung ermöglicht:
 
@@ -130,7 +130,7 @@ Die Anwendung ermöglicht:
 
 ---
 
-# Voraussetzungen für valide Ergebnisse
+## Voraussetzungen für valide Ergebnisse
 
 * Korrekte Sensorplatzierung
 * Kalibrierte Fühler
